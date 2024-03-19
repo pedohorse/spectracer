@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.addSystemIncludePath(.{ .path = "/usr/include" });
     exe.linkSystemLibrary("embree3");
+    exe.linkSystemLibrary("spng");
     exe.addLibraryPath(.{ .path = "/usr/lib" });
 
     // This declares intent for the executable to be installed into the

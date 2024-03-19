@@ -17,7 +17,8 @@ pub const Pool = struct {
     closing: bool = false,
 
     pub fn init(self: *Pool, alloc: std.mem.Allocator) !void {
-        const thread_count = 4;
+        const thread_count = try Thread.getCpuCount();
+        std.debug.print("threadpool started with {} threads\n", .{thread_count});
         var threads: []Thread = try alloc.alloc(Thread, thread_count);
         var thread_triggers: []bool = try alloc.alloc(bool, thread_count);
         @memset(thread_triggers, false);
@@ -91,7 +92,6 @@ pub const Pool = struct {
             }
             break;
         }
-        std.log.debug("IT'S OVAAAA", .{});
     }
 
     fn thread_loop(self: *Pool, tid: usize, tcount: usize) void {
@@ -111,7 +111,13 @@ pub const Pool = struct {
                     defer self.mutex.lock();
 
                     const size = self.range_end - self.range_start;
-                    const wg_size = @max(1, size / tcount);
+                    const wg_size = blk: {
+                        var foo = @max(1, size / tcount);
+                        if (size % tcount != 0) {
+                            foo += 1;
+                        }
+                        break :blk foo;
+                    };
                     const start = self.range_start + tid * wg_size;
                     const end = @max(start, @min(self.range_end, start + wg_size));
 
