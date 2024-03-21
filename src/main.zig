@@ -10,6 +10,12 @@ const Color = @import("data_types.zig").Color;
 const output_ascii = @import("output_ascii.zig");
 const output_png = @import("output_png.zig");
 
+const logging = @import("log.zig");
+pub const std_options = struct {
+    pub const log_level = .debug;
+    pub const logFn = logging.logFn;
+};
+
 const Err = error{general};
 
 const SceneData = struct {
@@ -27,17 +33,24 @@ const ChunkData = struct {
 };
 
 pub fn main() !void {
+    logging.init_logging();
+
     var device = embree.rtcNewDevice(null);
     defer embree.rtcReleaseDevice(device);
     var scene = embree.rtcNewScene(device);
     defer embree.rtcReleaseScene(scene);
+    std.log.debug("loading geometry", .{});
     var geo = try obj_loader.load_obj(device, "ls_pig.obj");
+    std.log.debug("geometry loaded", .{});
+    embree.rtcSetGeometryTessellationRate(geo, 10.0);
+    embree.rtcCommitGeometry(geo);
 
     _ = embree.rtcAttachGeometry(scene, geo);
     embree.rtcReleaseGeometry(geo);
     embree.rtcCommitScene(scene);
 
     {
+        std.log.debug("preparing data", .{});
         const alloc: std.mem.Allocator = std.heap.c_allocator;
         const width = 1024;
         const height = 1024;
@@ -87,13 +100,16 @@ pub fn main() !void {
             defer thread_pool.deinit();
 
             //thread_pool.parallel_for([]embree.RTCRayHit, SceneData, 0, chunks.len, chunks, &scene_context, &trace_chunk);
+            std.log.debug("render started", .{});
             thread_pool.parallel_for([]Color, []ChunkData, 0, chunks.len, chunks, &chunk_datas, &trace_chunk2);
+            std.log.debug("render finished", .{});
         }
 
         //output_ascii.preview_ascii(pixels, width, height);
-        print("saving picture\n", .{});
+        std.log.debug("saving picture", .{});
         //try output_ascii.save_ascii(pixels, width, height, "outpic.txt");
         try output_png.save_png(pixels, width, height, "outpic.png");
+        std.log.debug("done", .{});
     }
 }
 
@@ -145,22 +161,30 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]ChunkData) 
     const ortho_width = 0.5;
     const ortho_height = 0.5;
     for (chunks[chunk_id]) |*pixel| {
-        const x: f32 = -ortho_width + 2 * ortho_width * (@as(f32, @floatFromInt(pix_x)) / @as(f32, @floatFromInt(width)));
-        const y: f32 = ortho_height - 2 * ortho_height * (@as(f32, @floatFromInt(pix_y)) / @as(f32, @floatFromInt(height)));
-        const dirlen = @sqrt(x * x + y * y + focal2); // dir may not be normalized, but it's easier if we keep things normalized for ourselves
-        rayhit.ray.org_x = 0;
-        rayhit.ray.org_y = 0;
-        rayhit.ray.org_z = focal;
-        rayhit.ray.dir_x = x / dirlen;
-        rayhit.ray.dir_y = y / dirlen;
-        rayhit.ray.dir_z = -focal / dirlen;
-        rayhit.ray.tnear = 0;
-        rayhit.ray.mask = 1;
-        rayhit.ray.tfar = std.math.inf(f32);
-        rayhit.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
+        var avg_val: f32 = 0;
+        for (0..PRIMARY_SAMPLES * PRIMARY_SAMPLES) |sample_i| {
+            const xs_offset: f32 = (@as(f32, @floatFromInt(sample_i % PRIMARY_SAMPLES)) + 0.5) / PRIMARY_SAMPLES - 0.5;
+            const ys_offset: f32 = (@as(f32, @floatFromInt(sample_i / PRIMARY_SAMPLES)) + 0.5) / PRIMARY_SAMPLES - 0.5;
 
-        const val = trace_ray(&rayhit, &chunk_data, randomizer.random(), 0);
-        pixel.* = .{ .r = val, .g = val, .b = val };
+            const x: f32 = -ortho_width + 2 * ortho_width * ((xs_offset + @as(f32, @floatFromInt(pix_x))) / @as(f32, @floatFromInt(width)));
+            const y: f32 = ortho_height - 2 * ortho_height * ((ys_offset + @as(f32, @floatFromInt(pix_y))) / @as(f32, @floatFromInt(height)));
+            const dirlen = @sqrt(x * x + y * y + focal2); // dir may not be normalized, but it's easier if we keep things normalized for ourselves
+            rayhit.ray.org_x = 0;
+            rayhit.ray.org_y = 0;
+            rayhit.ray.org_z = focal;
+            rayhit.ray.dir_x = x / dirlen;
+            rayhit.ray.dir_y = y / dirlen;
+            rayhit.ray.dir_z = -focal / dirlen;
+            rayhit.ray.tnear = 0;
+            rayhit.ray.mask = 1;
+            rayhit.ray.tfar = std.math.inf(f32);
+            rayhit.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
+
+            const val = trace_ray(&rayhit, &chunk_data, randomizer.random(), 0);
+            avg_val += val;
+        }
+        avg_val /= PRIMARY_SAMPLES * PRIMARY_SAMPLES;
+        pixel.* = .{ .r = avg_val, .g = avg_val, .b = avg_val };
 
         pix_x += 1;
         if (pix_x == width) {
@@ -172,6 +196,7 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]ChunkData) 
 
 const MAX_BOUNCE = 1;
 const SECONDARY_SAMPLES = 16;
+const PRIMARY_SAMPLES = 1;
 
 fn trace_ray(rayhit: *embree.RTCRayHit, chunk_data: *const ChunkData, rng: std.rand.Random, depth: u32) f32 {
     if (depth > MAX_BOUNCE) {

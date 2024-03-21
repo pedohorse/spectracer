@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log;
 const Thread = std.Thread;
 
 pub const Pool = struct {
@@ -18,7 +19,7 @@ pub const Pool = struct {
 
     pub fn init(self: *Pool, alloc: std.mem.Allocator) !void {
         const thread_count = try Thread.getCpuCount();
-        std.debug.print("threadpool started with {} threads\n", .{thread_count});
+        log.debug("threadpool started with {} threads", .{thread_count});
         var threads: []Thread = try alloc.alloc(Thread, thread_count);
         var thread_triggers: []bool = try alloc.alloc(bool, thread_count);
         @memset(thread_triggers, false);
@@ -110,19 +111,35 @@ pub const Pool = struct {
                     self.mutex.unlock();
                     defer self.mutex.lock();
 
-                    const size = self.range_end - self.range_start;
-                    const wg_size = blk: {
-                        var foo = @max(1, size / tcount);
-                        if (size % tcount != 0) {
-                            foo += 1;
-                        }
-                        break :blk foo;
-                    };
-                    const start = self.range_start + tid * wg_size;
-                    const end = @max(start, @min(self.range_end, start + wg_size));
+                    // const size = self.range_end - self.range_start;
+                    // const wg_size = blk: {
+                    //     var foo = @max(1, size / tcount);
+                    //     if (size % tcount != 0) {
+                    //         foo += 1;
+                    //     }
+                    //     break :blk foo;
+                    // };
+                    // const start = self.range_start + tid * wg_size;
+                    // const end = @max(start, @min(self.range_end, start + wg_size));
 
-                    for (start..end) |i| {
-                        self.func(self.data, self.orig_slice_len, i, self.user_data);
+                    // for (start..end) |i| {
+                    //     self.func(self.data, self.orig_slice_len, i, self.user_data);
+                    // }
+
+                    // var i = self.range_start + tid;
+                    // while (i < self.range_end) {
+                    //     self.func(self.data, self.orig_slice_len, i, self.user_data);
+                    //     i += tcount;
+                    // }
+
+                    const block_size = 128;
+                    const stride = tcount * block_size;
+                    var i = self.range_start + tid * block_size;
+                    while (i < self.range_end) {
+                        for (0..@min(self.range_end - i, block_size)) |offset| {
+                            self.func(self.data, self.orig_slice_len, i + offset, self.user_data);
+                        }
+                        i += stride;
                     }
                 }
                 self.data_provided[tid] = false;

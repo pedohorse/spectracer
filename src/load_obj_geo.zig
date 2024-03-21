@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log;
 const alloc = std.heap.page_allocator;
 const embree = @cImport({
     @cInclude("embree3/rtcore.h");
@@ -15,10 +16,16 @@ const LoadingError = error{
 pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeometry {
     var vertices = try std.ArrayList(f32).initCapacity(alloc, 8192);
     defer vertices.deinit();
-    var triangles = try std.ArrayList(u32).initCapacity(alloc, 8192);
-    defer triangles.deinit();
+    var polygons = try std.ArrayList(u32).initCapacity(alloc, 8192);
+    defer polygons.deinit();
+    var face_vtx_counts = try std.ArrayList(u32).initCapacity(alloc, 8192);
+    defer face_vtx_counts.deinit();
+    // var colors = try std.ArrayList(f32).initCapacity(alloc, 8192);
+    // defer colors.deinit();
+    // var colors = try std.ArrayList(f32).initCapacity(alloc, 8192);
+    // defer colors.deinit();
     var vertex_count: usize = 0;
-    var triangle_count: usize = 0;
+    var primitive_count: usize = 0;
 
     {
         var file = std.fs.cwd().openFile(file_path, .{}) catch {
@@ -54,6 +61,10 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
                             lstate = .skip_spaces;
                             try vertices.append(v);
                             values_parsed += 1;
+                            if (values_parsed == 3) {
+                                // for now ignore possible color
+                                break;
+                            }
                         } else if (c != ' ' and lstate == .skip_spaces) {
                             prev_i = i;
                             lstate = .parse_text;
@@ -67,8 +78,6 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
                     var prev_i: usize = 2;
                     var lstate = (enum { skip_spaces, skip_garbage, parse_text }).skip_spaces;
                     var values_parsed: u32 = 0;
-                    var vi0: u32 = undefined;
-                    var vi1: u32 = undefined;
 
                     for (line_buf.items[2..], 2..) |c, i| {
                         switch (lstate) {
@@ -76,19 +85,8 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
                                 const v = try std.fmt.parseInt(u32, line_buf.items[prev_i..i], 10) - 1;
                                 lstate = if (c == '/') .skip_garbage else .skip_spaces;
 
-                                if (values_parsed == 0) {
-                                    triangle_count += 1;
-                                    vi0 = v;
-                                } else if (values_parsed == 1) {
-                                    vi1 = v;
-                                } else if (values_parsed > 2) {
-                                    try triangles.append(vi0);
-                                    try triangles.append(vi1);
-                                    triangle_count += 1;
-                                }
-                                try triangles.append(v);
+                                try polygons.append(v);
                                 values_parsed += 1;
-                                vi1 = v;
                                 if (v >= vertices.items.len) {
                                     return LoadingError.LogicError;
                                 }
@@ -102,7 +100,9 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
                             },
                         }
                     }
-                    if (values_parsed < 3 or lstate == .parse_text or triangles.items.len % 3 != 0) {
+                    primitive_count += 1;
+                    try face_vtx_counts.append(values_parsed);
+                    if (values_parsed < 3 or lstate == .parse_text) {
                         return LoadingError.LogicError;
                     }
                 }
@@ -110,27 +110,29 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
         }
     }
 
-    if (vertex_count != vertices.items.len / 3 or vertices.items.len % 3 != 0) {
-        return LoadingError.InternalError;
-    }
-    if (triangle_count != triangles.items.len / 3 or triangles.items.len % 3 != 0) {
+    if (vertex_count != vertices.items.len / 3 or vertices.items.len % 3 != 0 or face_vtx_counts.items.len != primitive_count) {
         return LoadingError.InternalError;
     }
 
-    std.debug.print("geo {s} has {} verts, {} tris\n", .{ file_path, vertex_count, triangle_count });
+    log.debug("geo {s} has {} verts, {} prims", .{ file_path, vertex_count, primitive_count });
 
     // now to embree part
-    var geo = embree.rtcNewGeometry(device, embree.RTC_GEOMETRY_TYPE_TRIANGLE);
+    var geo = embree.rtcNewGeometry(device, embree.RTC_GEOMETRY_TYPE_SUBDIVISION);
 
     var vertex_buff: [*]f32 = @ptrCast(@alignCast(embree.rtcSetNewGeometryBuffer(geo, embree.RTC_BUFFER_TYPE_VERTEX, 0, embree.RTC_FORMAT_FLOAT3, 3 * @sizeOf(f32), vertex_count) orelse {
         return LoadingError.AllocError;
     }));
     @memcpy(vertex_buff[0..vertices.items.len], vertices.items);
 
-    var index_buff: [*]u32 = @ptrCast(@alignCast(embree.rtcSetNewGeometryBuffer(geo, embree.RTC_BUFFER_TYPE_INDEX, 0, embree.RTC_FORMAT_UINT3, 3 * @sizeOf(u32), triangle_count) orelse {
+    var facecnt_buff: [*]u32 = @ptrCast(@alignCast(embree.rtcSetNewGeometryBuffer(geo, embree.RTC_BUFFER_TYPE_FACE, 0, embree.RTC_FORMAT_UINT, @sizeOf(u32), face_vtx_counts.items.len) orelse {
         return LoadingError.AllocError;
     }));
-    @memcpy(index_buff[0..triangles.items.len], triangles.items);
+    @memcpy(facecnt_buff[0..face_vtx_counts.items.len], face_vtx_counts.items);
+
+    var index_buff: [*]u32 = @ptrCast(@alignCast(embree.rtcSetNewGeometryBuffer(geo, embree.RTC_BUFFER_TYPE_INDEX, 0, embree.RTC_FORMAT_UINT, @sizeOf(u32), polygons.items.len) orelse {
+        return LoadingError.AllocError;
+    }));
+    @memcpy(index_buff[0..polygons.items.len], polygons.items);
 
     embree.rtcCommitGeometry(geo);
     return geo;
