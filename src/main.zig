@@ -56,7 +56,6 @@ pub fn main() !void {
         const height = 1024;
         var pixels: []Color align(16) = try alloc.alloc(Color, width * height);
         defer alloc.free(pixels);
-        //initialize_ray_data(rays, width, height, 0.5);
 
         var inter_context: embree.RTCIntersectContext align(16) = undefined;
         embree.rtcInitIntersectContext(&inter_context);
@@ -87,8 +86,6 @@ pub fn main() !void {
                 chunk_datas[ci].chunk_start_y = offset / width;
                 chunk_datas[ci].intersection_context = &inter_context;
                 offset += chunk_size;
-
-                //print("{}x{} ", .{ chunk_datas[ci].chunk_start_x, chunk_datas[ci].chunk_start_y });
             }
         }
         defer alloc.free(chunks);
@@ -99,7 +96,6 @@ pub fn main() !void {
             try thread_pool.init(alloc);
             defer thread_pool.deinit();
 
-            //thread_pool.parallel_for([]embree.RTCRayHit, SceneData, 0, chunks.len, chunks, &scene_context, &trace_chunk);
             std.log.debug("render started", .{});
             thread_pool.parallel_for([]Color, []ChunkData, 0, chunks.len, chunks, &chunk_datas, &trace_chunk2);
             std.log.debug("render finished", .{});
@@ -112,40 +108,6 @@ pub fn main() !void {
         std.log.debug("done", .{});
     }
 }
-
-// fn initialize_ray_data(rays: []embree.RTCRayHit, width: usize, height: usize, focal_dist: f32) void {
-//     // for now it's orthographic for test
-//     // TODO: make parallel
-
-//     const ortho_width = 1.0;
-//     const ortho_height = 1.0;
-//     for (0..height) |h| {
-//         const offset = h * width;
-//         const y: f32 = -ortho_height + 2 * ortho_height * (@as(f32, @floatFromInt(h)) / @as(f32, @floatFromInt(height)));
-//         for (0..width) |w| {
-//             var x = -ortho_width + 2 * ortho_width * (@as(f32, @floatFromInt(w)) / @as(f32, @floatFromInt(width)));
-//             var ray: *embree.RTCRayHit = &rays[offset + w];
-//             const dirlen = std.math.sqrt(x * x + y * y + focal_dist * focal_dist); // dir may not be normalized, but it's easier if we keep things normalized for ourselves
-//             ray.ray.org_x = 0;
-//             ray.ray.org_y = 0;
-//             ray.ray.org_z = -focal_dist;
-//             ray.ray.dir_x = x / dirlen;
-//             ray.ray.dir_y = y / dirlen;
-//             ray.ray.dir_z = focal_dist / dirlen;
-//             ray.ray.tnear = 0;
-//             ray.ray.mask = 1;
-//             ray.ray.tfar = std.math.inf(f32);
-//             ray.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
-//         }
-//     }
-// }
-
-// fn trace_chunk(chunks: [][]embree.RTCRayHit, chunk_id: usize, scene_data: ?*SceneData) void {
-//     for (chunks[chunk_id]) |*ray| {
-//         //val.* += 1.2 * @as(f32, @floatFromInt(chunk_id));
-//         embree.rtcIntersect1(scene_data.?.scene, scene_data.?.intersection_context, ray);
-//     }
-// }
 
 fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]ChunkData) void {
     var randomizer = std.rand.Xoshiro256.init(chunk_id + 132435);
