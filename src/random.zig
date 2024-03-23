@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn random_hemisphere(u: f32, v: f32, normal: @Vector(3, f32)) @Vector(3, f32) {
+pub inline fn random_hemisphere(u: f32, v: f32, normal: @Vector(3, f32)) @Vector(3, f32) {
     const sample = random_sphere(u, v);
     return if (@reduce(.Add, sample * normal) < 0)
         -sample
@@ -8,7 +8,7 @@ pub fn random_hemisphere(u: f32, v: f32, normal: @Vector(3, f32)) @Vector(3, f32
         sample;
 }
 
-pub fn random_sphere(u: f32, v: f32) @Vector(3, f32) {
+pub inline fn random_sphere(u: f32, v: f32) @Vector(3, f32) {
     const fi = u * 2 * std.math.pi;
     var x = @cos(fi);
     var y = @sin(fi);

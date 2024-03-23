@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = std.log;
+const scene_stuff = @import("scene.zig");
 const alloc = std.heap.page_allocator;
 const embree = @cImport({
     @cInclude("embree3/rtcore.h");
@@ -13,7 +14,41 @@ const LoadingError = error{
     FileNotFound,
 };
 
-pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeometry {
+pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !scene_stuff.Scene {
+    var idir = std.fs.cwd().openIterableDir(scene_dir_path, .{}) catch {
+        return LoadingError.FileNotFound;
+    };
+    defer idir.close();
+    var dir = std.fs.cwd().openDir(scene_dir_path, .{}) catch {
+        return LoadingError.FileNotFound;
+    };
+    defer dir.close();
+
+    var scene = embree.rtcNewScene(device);
+    var matmap = std.AutoHashMap(u32, scene_stuff.Material).init(alloc);
+
+    var dir_iter = idir.iterateAssumeFirstIteration();
+    while (try dir_iter.next()) |entry| {
+        if (entry.kind != .file) continue;
+
+        // figure out material from name
+        const mat_name = entry.name[0 .. std.mem.indexOf(u8, entry.name, "_") orelse entry.name.len];
+
+        var geo = try load_obj(device, dir, entry.name);
+        embree.rtcSetGeometryTessellationRate(geo, 10.0);
+        embree.rtcCommitGeometry(geo);
+
+        const geo_id: u32 = embree.rtcAttachGeometry(scene, geo);
+        try matmap.put(geo_id, std.meta.stringToEnum(scene_stuff.Material, mat_name) orelse .lambert);
+        log.debug("obj is .{s}.", .{mat_name});
+        embree.rtcReleaseGeometry(geo);
+    }
+
+    embree.rtcCommitScene(scene);
+    return .{ .embree_scene = scene, .material_map = matmap };
+}
+
+pub fn load_obj(device: embree.RTCDevice, dir: std.fs.Dir, file_path: []const u8) !embree.RTCGeometry {
     var vertices = try std.ArrayList(f32).initCapacity(alloc, 8192);
     defer vertices.deinit();
     var polygons = try std.ArrayList(u32).initCapacity(alloc, 8192);
@@ -28,7 +63,7 @@ pub fn load_obj(device: embree.RTCDevice, file_path: []const u8) !embree.RTCGeom
     var primitive_count: usize = 0;
 
     {
-        var file = std.fs.cwd().openFile(file_path, .{}) catch {
+        var file = dir.openFile(file_path, .{}) catch {
             return LoadingError.FileNotFound;
         };
         defer file.close();

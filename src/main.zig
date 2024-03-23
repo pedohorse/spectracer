@@ -6,6 +6,8 @@ const embree = @cImport({
 });
 const Pool = @import("parallel.zig").Pool;
 const Color = @import("data_types.zig").Color;
+const Spectrum = @import("spectrum.zig").Spectrum;
+const Scene = @import("scene.zig").Scene;
 const random_hemisphere = @import("random.zig").random_hemisphere;
 
 const output_ascii = @import("output_ascii.zig");
@@ -20,7 +22,7 @@ pub const std_options = struct {
 const Err = error{general};
 
 const SceneData = struct {
-    scene: embree.RTCScene,
+    scene: *Scene,
     global_height: usize,
     global_width: usize,
     focal: f32,
@@ -38,17 +40,10 @@ pub fn main() !void {
 
     var device = embree.rtcNewDevice(null);
     defer embree.rtcReleaseDevice(device);
-    var scene = embree.rtcNewScene(device);
-    defer embree.rtcReleaseScene(scene);
-    std.log.debug("loading geometry", .{});
-    var geo = try obj_loader.load_obj(device, "ls_pig.obj");
-    std.log.debug("geometry loaded", .{});
-    embree.rtcSetGeometryTessellationRate(geo, 10.0);
-    embree.rtcCommitGeometry(geo);
-
-    _ = embree.rtcAttachGeometry(scene, geo);
-    embree.rtcReleaseGeometry(geo);
-    embree.rtcCommitScene(scene);
+    std.log.debug("loading scene", .{});
+    var scene = try obj_loader.load_obj_scene(device, "scene");
+    defer scene.deinit();
+    std.log.debug("scene loaded", .{});
 
     {
         std.log.debug("preparing data", .{});
@@ -61,7 +56,7 @@ pub fn main() !void {
         var inter_context: embree.RTCIntersectContext align(16) = undefined;
         embree.rtcInitIntersectContext(&inter_context);
         var scene_context = SceneData{
-            .scene = scene,
+            .scene = &scene,
             .focal = 1.5,
             .global_width = width,
             .global_height = height,
@@ -123,8 +118,9 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]ChunkData) 
     const height = chunk_data.scene_data.global_height;
     const ortho_width = 0.5;
     const ortho_height = 0.5;
+
     for (chunks[chunk_id]) |*pixel| {
-        var avg_val: f32 = 0;
+        var avg_val: Spectrum = Spectrum.new_black();
         for (0..PRIMARY_SAMPLES * PRIMARY_SAMPLES) |sample_i| {
             const xs_offset: f32 = (@as(f32, @floatFromInt(sample_i % PRIMARY_SAMPLES)) + 0.5) / PRIMARY_SAMPLES - 0.5;
             const ys_offset: f32 = (@as(f32, @floatFromInt(sample_i / PRIMARY_SAMPLES)) + 0.5) / PRIMARY_SAMPLES - 0.5;
@@ -143,11 +139,12 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]ChunkData) 
             rayhit.ray.tfar = std.math.inf(f32);
             rayhit.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
 
-            const val = trace_ray(&rayhit, &chunk_data, randomizer.random(), 0);
-            avg_val += val;
+            const val = trace_ray(Spectrum, &rayhit, 0.0, &chunk_data, randomizer.random(), 0);
+            avg_val.add(&val);
         }
-        avg_val /= PRIMARY_SAMPLES * PRIMARY_SAMPLES;
-        pixel.* = .{ .r = avg_val, .g = avg_val, .b = avg_val };
+        avg_val.scale(1.0 / PRIMARY_SAMPLES * PRIMARY_SAMPLES);
+        //pixel.* = .{ .r = avg_val, .g = avg_val, .b = avg_val };
+        pixel.* = avg_val.to_color();
 
         pix_x += 1;
         if (pix_x == width) {
@@ -161,22 +158,40 @@ const MAX_BOUNCE = 1;
 const SECONDARY_SAMPLES = 16;
 const PRIMARY_SAMPLES = 1;
 
-fn trace_ray(rayhit: *embree.RTCRayHit, chunk_data: *const ChunkData, rng: std.rand.Random, depth: u32) f32 {
+fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_data: *const ChunkData, rng: std.rand.Random, depth: u32) T {
     if (depth > MAX_BOUNCE) {
-        return 0.0;
+        if (T == Spectrum) {
+            return Spectrum.new_black();
+        } else if (T == f32) {
+            return 0.0;
+        } else unreachable;
     }
-    embree.rtcIntersect1(chunk_data.scene_data.scene, chunk_data.intersection_context, rayhit);
+    embree.rtcIntersect1(chunk_data.scene_data.scene.embree_scene, chunk_data.intersection_context, rayhit);
     if (rayhit.hit.geomID == embree.RTC_INVALID_GEOMETRY_ID) {
         // no hit
         //return 0.0;
         // but for now we treat all env as light
-        return 2.0 * rayhit.ray.dir_y; // imitate sky light
+        const val = 0.0; // 2.0 * rayhit.ray.dir_y; // imitate sky light
+        if (T == Spectrum) {
+            return Spectrum.new_uniform(val);
+        } else if (T == f32) {
+            return val;
+        } else unreachable;
+    } else if (chunk_data.scene_data.scene.material_map.get(rayhit.hit.geomID) orelse .lambert == .light) {
+        const val = 10.0; // TODO: take intensity from light properties
+        if (T == Spectrum) {
+            return Spectrum.new_uniform(val);
+        } else if (T == f32) {
+            return val;
+        } else unreachable;
     }
 
     // lambert
 
+    var per_freq_bsdf = false;
+
     const sample_count: usize = SECONDARY_SAMPLES;
-    var val: f32 = 0;
+    var val: T = if (T == Spectrum) Spectrum.new_black() else if (T == f32) 0.0 else unreachable;
     var secondary_rayhit: embree.RTCRayHit align(16) = undefined;
     const eps = 0.0001;
     for (0..sample_count) |_| {
@@ -185,28 +200,68 @@ fn trace_ray(rayhit: *embree.RTCRayHit, chunk_data: *const ChunkData, rng: std.r
             vec /= @splat(@sqrt(@reduce(.Add, vec * vec)));
             break :blk vec;
         };
-        const new_dir: @Vector(3, f32) = random_hemisphere(rng.float(f32), rng.float(f32), normal);
-        secondary_rayhit.ray.org_x = rayhit.ray.org_x + rayhit.ray.dir_x * rayhit.ray.tfar + eps * normal[0];
-        secondary_rayhit.ray.org_y = rayhit.ray.org_y + rayhit.ray.dir_y * rayhit.ray.tfar + eps * normal[1];
-        secondary_rayhit.ray.org_z = rayhit.ray.org_z + rayhit.ray.dir_z * rayhit.ray.tfar + eps * normal[2];
-        secondary_rayhit.ray.dir_x = new_dir[0];
-        secondary_rayhit.ray.dir_y = new_dir[1];
-        secondary_rayhit.ray.dir_z = new_dir[2];
-        secondary_rayhit.ray.tnear = 0;
-        secondary_rayhit.ray.mask = 1;
-        secondary_rayhit.ray.tfar = std.math.inf(f32);
-        secondary_rayhit.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
-        var new_sample = trace_ray(&secondary_rayhit, chunk_data, rng, depth + 1);
-        const dotn = @reduce(.Add, new_dir * normal);
-        new_sample *= dotn;
-        val += new_sample;
-    }
-    if (sample_count > 0) {
-        val /= @floatFromInt(sample_count);
+        if (T == Spectrum) {
+            if (per_freq_bsdf) {
+                // case when spectrum needs frequency-dependent bsdf sampling
+                const ru = rng.float(f32);
+                const rv = rng.float(f32);
+                for (&val.values, 0..) |*x, i| {
+                    const freq: f32 = Spectrum.start_freq + Spectrum.freq_step * @as(f32, @floatFromInt(i));
+                    // TODO: generalize ray sampling func
+                    const new_dir: @Vector(3, f32) = random_hemisphere(ru, rv, normal);
+                    const dotn = @reduce(.Add, new_dir * normal);
+                    init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+
+                    const sample = trace_ray(f32, &secondary_rayhit, freq, chunk_data, rng, depth + 1);
+                    x.* += sample * dotn;
+                }
+            } else {
+                // case when ray does not need frequency-dependent bsdf sampling
+                const new_dir: @Vector(3, f32) = random_hemisphere(rng.float(f32), rng.float(f32), normal);
+                const dotn = @reduce(.Add, new_dir * normal);
+                init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+
+                const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
+                for (&val.values, new_sample.values) |*x, y| {
+                    x.* += y * dotn;
+                }
+            }
+        } else if (T == f32) {
+            // case of single frequency ray sampling
+            const new_dir: @Vector(3, f32) = random_hemisphere(rng.float(f32), rng.float(f32), normal);
+            const dotn = @reduce(.Add, new_dir * normal);
+            init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+
+            const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
+            val += new_sample * dotn;
+        } else unreachable;
     }
 
-    // albedo
-    val *= 0.99;
+    // TODO: get this material's blocking spectrum
+    const tmp_spec_mod = 0.99;
+
+    if (sample_count > 0) {
+        const total_weight: f32 = @floatFromInt(sample_count);
+        if (T == Spectrum) {
+            val.scale(tmp_spec_mod / total_weight);
+        } else if (T == f32) {
+            val /= total_weight;
+            val *= tmp_spec_mod;
+        } else unreachable;
+    }
 
     return val;
+}
+
+fn init_secondary_rayhit(secondary_rayhit: *embree.RTCRayHit, rayhit: *const embree.RTCRayHit, new_dir: @Vector(3, f32), normal: @Vector(3, f32), eps: f32) void {
+    secondary_rayhit.*.ray.org_x = rayhit.ray.org_x + rayhit.ray.dir_x * rayhit.ray.tfar + eps * normal[0];
+    secondary_rayhit.*.ray.org_y = rayhit.ray.org_y + rayhit.ray.dir_y * rayhit.ray.tfar + eps * normal[1];
+    secondary_rayhit.*.ray.org_z = rayhit.ray.org_z + rayhit.ray.dir_z * rayhit.ray.tfar + eps * normal[2];
+    secondary_rayhit.*.ray.dir_x = new_dir[0];
+    secondary_rayhit.*.ray.dir_y = new_dir[1];
+    secondary_rayhit.*.ray.dir_z = new_dir[2];
+    secondary_rayhit.*.ray.tnear = 0;
+    secondary_rayhit.*.ray.mask = 1;
+    secondary_rayhit.*.ray.tfar = std.math.inf(f32);
+    secondary_rayhit.*.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
 }
