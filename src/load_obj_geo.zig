@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = std.log;
 const scene_stuff = @import("scene.zig");
+const shaders = @import("shader.zig");
 const alloc = std.heap.page_allocator;
 const embree = @cImport({
     @cInclude("embree3/rtcore.h");
@@ -24,8 +25,9 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
     };
     defer dir.close();
 
-    var scene = embree.rtcNewScene(device);
-    var matmap = std.AutoHashMap(u32, scene_stuff.Material).init(alloc);
+    //var rtc_scene = embree.rtcNewScene(device);
+    //var matmap = std.AutoHashMap(u32, shaders.Shader).init(alloc);
+    var scene = scene_stuff.Scene.init(alloc, device);
 
     var dir_iter = idir.iterateAssumeFirstIteration();
     while (try dir_iter.next()) |entry| {
@@ -38,14 +40,17 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
         embree.rtcSetGeometryTessellationRate(geo, 10.0);
         embree.rtcCommitGeometry(geo);
 
-        const geo_id: u32 = embree.rtcAttachGeometry(scene, geo);
-        try matmap.put(geo_id, std.meta.stringToEnum(scene_stuff.Material, mat_name) orelse .lambert);
+        const geo_id: u32 = embree.rtcAttachGeometry(scene.embree_scene, geo);
+        try scene.assign_material(geo_id, if (std.mem.eql(u8, mat_name, "light"))
+            try scene.new_light(.{ .r = 10.0, .g = 1.0, .b = 1.0 })
+        else
+            try scene.new_lambert(.{ .r = 1.0, .g = 1.0, .b = 1.0 }));
         log.debug("obj is .{s}.", .{mat_name});
         embree.rtcReleaseGeometry(geo);
     }
 
-    embree.rtcCommitScene(scene);
-    return .{ .embree_scene = scene, .material_map = matmap };
+    scene.commit();
+    return scene;
 }
 
 pub fn load_obj(device: embree.RTCDevice, dir: std.fs.Dir, file_path: []const u8) !embree.RTCGeometry {

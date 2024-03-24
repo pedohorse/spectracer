@@ -8,7 +8,7 @@ const Pool = @import("parallel.zig").Pool;
 const Color = @import("data_types.zig").Color;
 const Spectrum = @import("spectrum.zig").Spectrum;
 const Scene = @import("scene.zig").Scene;
-const random_hemisphere = @import("random.zig").random_hemisphere;
+const Shader = @import("shader.zig").Shader;
 
 const output_ascii = @import("output_ascii.zig");
 const output_png = @import("output_png.zig");
@@ -171,14 +171,7 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
         // no hit
         //return 0.0;
         // but for now we treat all env as light
-        const val = 0.0; // 2.0 * rayhit.ray.dir_y; // imitate sky light
-        if (T == Spectrum) {
-            return Spectrum.new_uniform(val);
-        } else if (T == f32) {
-            return val;
-        } else unreachable;
-    } else if (chunk_data.scene_data.scene.material_map.get(rayhit.hit.geomID) orelse .lambert == .light) {
-        const val = 10.0; // TODO: take intensity from light properties
+        const val = 2.0 * rayhit.ray.dir_y; // imitate sky light
         if (T == Spectrum) {
             return Spectrum.new_uniform(val);
         } else if (T == f32) {
@@ -186,40 +179,57 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
         } else unreachable;
     }
 
-    // lambert
+    // shading
+    var val: T = if (T == Spectrum) Spectrum.new_black() else if (T == f32) 0.0 else unreachable;
+    const shader: Shader = chunk_data.scene_data.scene.material_map.get(rayhit.hit.geomID) orelse return val;
 
-    var per_freq_bsdf = false;
+    // check if material is emissive only
+    if (shader.is_light) {
+        //const intens = 10.0; // TODO: take intensity from light properties
+        if (T == Spectrum) {
+            val = shader.emit_spectrum.*;
+        } else if (T == f32) {
+            val = shader.emit_spectrum.sample_at(frequency);
+        } else unreachable;
+        return val;
+    }
 
     const sample_count: usize = SECONDARY_SAMPLES;
-    var val: T = if (T == Spectrum) Spectrum.new_black() else if (T == f32) 0.0 else unreachable;
     var secondary_rayhit: embree.RTCRayHit align(16) = undefined;
     const eps = 0.0001;
+    const normal: @Vector(3, f32) = blk: {
+        var vec: @Vector(3, f32) = .{ rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z };
+        vec /= @splat(@sqrt(@reduce(.Add, vec * vec)));
+        break :blk vec;
+    };
+    const ray_in: @Vector(3, f32) = .{ rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z };
+    const ray_hit_point: @Vector(3, f32) = .{
+        rayhit.ray.org_x + rayhit.ray.dir_x * rayhit.ray.tfar + eps * normal[0],
+        rayhit.ray.org_y + rayhit.ray.dir_y * rayhit.ray.tfar + eps * normal[1],
+        rayhit.ray.org_z + rayhit.ray.dir_z * rayhit.ray.tfar + eps * normal[2],
+    };
+
     for (0..sample_count) |_| {
-        const normal: @Vector(3, f32) = blk: {
-            var vec: @Vector(3, f32) = .{ rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z };
-            vec /= @splat(@sqrt(@reduce(.Add, vec * vec)));
-            break :blk vec;
-        };
         if (T == Spectrum) {
-            if (per_freq_bsdf) {
+            if (shader.is_frequency_dependent) {
                 // case when spectrum needs frequency-dependent bsdf sampling
                 const ru = rng.float(f32);
                 const rv = rng.float(f32);
                 for (&val.values, 0..) |*x, i| {
                     const freq: f32 = Spectrum.start_freq + Spectrum.freq_step * @as(f32, @floatFromInt(i));
                     // TODO: generalize ray sampling func
-                    const new_dir: @Vector(3, f32) = random_hemisphere(ru, rv, normal);
+                    const new_dir: @Vector(3, f32) = shader.sample_direction(ru, rv, ray_in, normal, freq);
                     const dotn = @reduce(.Add, new_dir * normal);
-                    init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+                    init_secondary_rayhit(&secondary_rayhit, ray_hit_point, new_dir);
 
                     const sample = trace_ray(f32, &secondary_rayhit, freq, chunk_data, rng, depth + 1);
                     x.* += sample * dotn;
                 }
             } else {
                 // case when ray does not need frequency-dependent bsdf sampling
-                const new_dir: @Vector(3, f32) = random_hemisphere(rng.float(f32), rng.float(f32), normal);
+                const new_dir: @Vector(3, f32) = shader.sample_direction(rng.float(f32), rng.float(f32), ray_in, normal, 0);
                 const dotn = @reduce(.Add, new_dir * normal);
-                init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+                init_secondary_rayhit(&secondary_rayhit, ray_hit_point, new_dir);
 
                 const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
                 for (&val.values, new_sample.values) |*x, y| {
@@ -228,9 +238,9 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
             }
         } else if (T == f32) {
             // case of single frequency ray sampling
-            const new_dir: @Vector(3, f32) = random_hemisphere(rng.float(f32), rng.float(f32), normal);
+            const new_dir: @Vector(3, f32) = shader.sample_direction(rng.float(f32), rng.float(f32), ray_in, normal, frequency);
             const dotn = @reduce(.Add, new_dir * normal);
-            init_secondary_rayhit(&secondary_rayhit, rayhit, new_dir, normal, eps);
+            init_secondary_rayhit(&secondary_rayhit, ray_hit_point, new_dir);
 
             const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
             val += new_sample * dotn;
@@ -253,10 +263,10 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
     return val;
 }
 
-fn init_secondary_rayhit(secondary_rayhit: *embree.RTCRayHit, rayhit: *const embree.RTCRayHit, new_dir: @Vector(3, f32), normal: @Vector(3, f32), eps: f32) void {
-    secondary_rayhit.*.ray.org_x = rayhit.ray.org_x + rayhit.ray.dir_x * rayhit.ray.tfar + eps * normal[0];
-    secondary_rayhit.*.ray.org_y = rayhit.ray.org_y + rayhit.ray.dir_y * rayhit.ray.tfar + eps * normal[1];
-    secondary_rayhit.*.ray.org_z = rayhit.ray.org_z + rayhit.ray.dir_z * rayhit.ray.tfar + eps * normal[2];
+fn init_secondary_rayhit(secondary_rayhit: *embree.RTCRayHit, rayhit_point: @Vector(3, f32), new_dir: @Vector(3, f32)) void {
+    secondary_rayhit.*.ray.org_x = rayhit_point[0];
+    secondary_rayhit.*.ray.org_y = rayhit_point[1];
+    secondary_rayhit.*.ray.org_z = rayhit_point[2];
     secondary_rayhit.*.ray.dir_x = new_dir[0];
     secondary_rayhit.*.ray.dir_y = new_dir[1];
     secondary_rayhit.*.ray.dir_z = new_dir[2];
