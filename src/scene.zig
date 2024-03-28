@@ -12,6 +12,7 @@ pub const Scene = struct {
     material_map: std.AutoHashMap(u32, shaders.Shader),
     shaders_lambert: std.ArrayList(*shaders.Lambert),
     shaders_lights: std.ArrayList(*shaders.Light),
+    shaders_refracts: std.ArrayList(*shaders.Refract), // TODO: this is so ugly, need a better way to keep track of allocs
     alloc: std.mem.Allocator,
 
     pub fn init(
@@ -23,6 +24,7 @@ pub const Scene = struct {
             .material_map = std.AutoHashMap(u32, shaders.Shader).init(allocator),
             .shaders_lambert = std.ArrayList(*shaders.Lambert).init(allocator),
             .shaders_lights = std.ArrayList(*shaders.Light).init(allocator),
+            .shaders_refracts = std.ArrayList(*shaders.Refract).init(allocator),
             .alloc = allocator,
         };
     }
@@ -50,11 +52,21 @@ pub const Scene = struct {
         return shader.shader();
     }
 
+    pub fn new_refract(self: *Scene, ior_base: f32, ior_shift: f32) !shaders.Shader {
+        var shader = try self.alloc.create(shaders.Refract);
+        shader.set_ior(ior_base, ior_shift);
+        try self.shaders_refracts.append(shader);
+        return shader.shader();
+    }
+
     pub fn deinit(self: *Scene) void {
         for (self.shaders_lambert.items) |shader_ptr| {
             self.alloc.destroy(shader_ptr);
         }
         for (self.shaders_lights.items) |shader_ptr| {
+            self.alloc.destroy(shader_ptr);
+        }
+        for (self.shaders_refracts.items) |shader_ptr| {
             self.alloc.destroy(shader_ptr);
         }
 

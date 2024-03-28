@@ -7,7 +7,7 @@ const freq_strip_width: f32 = 10; // 10 Thz
 pub const Spectrum = struct {
     const color_scale: f32 = freq_strip_width / 100.0; // 100 is some arbitrary scale factor
     pub const start_freq = 380;
-    pub const end_freq = 400; // one after last, as usual
+    pub const end_freq = 800; // one after last, as usual
     pub const freq_step = 10;
     values: [spec_size]f32,
 
@@ -27,11 +27,15 @@ pub const Spectrum = struct {
         return spec;
     }
 
-    pub fn sample_at(self: *Spectrum, frequency: f32) f32 {
+    pub fn sample_at(self: *const Spectrum, frequency: f32) f32 {
         if (frequency > end_freq) return 0;
         if (frequency < start_freq) return 0;
-        const i: usize = @intFromFloat(@round((frequency - start_freq) / freq_step)); // no interpolation for now
+        const i: usize = @intFromFloat(@round((frequency - start_freq) / freq_step)); // no interpolation for now (no point)
         return self.values[i]; // i SHOULD be in range
+        // const fi = @floor((frequency - start_freq) / freq_step);
+        // const i: usize = @intFromFloat(fi);
+        // const t: f32 = @mod(fi, 1.0);
+        // return self.values[i] * (1 - t) + self.values[i + 1] * t;
     }
 
     pub fn set_const(this: *Spectrum, val: f32) void {

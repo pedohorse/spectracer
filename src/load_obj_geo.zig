@@ -30,22 +30,72 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
     var scene = scene_stuff.Scene.init(alloc, device);
 
     var dir_iter = idir.iterateAssumeFirstIteration();
+    var name_parts = try std.ArrayList([]const u8).initCapacity(alloc, 16);
+    defer name_parts.deinit();
     while (try dir_iter.next()) |entry| {
         if (entry.kind != .file) continue;
 
         // figure out material from name
-        const mat_name = entry.name[0 .. std.mem.indexOf(u8, entry.name, "_") orelse entry.name.len];
+        const name_no_ext = entry.name[0 .. std.mem.lastIndexOf(u8, entry.name, ".") orelse entry.name.len];
+
+        name_parts.clearRetainingCapacity();
+        {
+            var last_underscore: usize = @as(usize, 0) -% 1;
+            var underscore: usize = 0;
+            while (underscore < name_no_ext.len) {
+                const next_pos = last_underscore +% 1;
+                underscore = (std.mem.indexOf(u8, name_no_ext[next_pos..], "_") orelse (name_no_ext.len - next_pos)) + next_pos;
+                try name_parts.append(name_no_ext[next_pos..underscore]);
+                last_underscore = underscore;
+            }
+        }
+
+        if (name_parts.items.len == 0) continue;
+
+        const obj_name = name_parts.items[0];
+        _ = obj_name; // TODO: figure out why we need name
+        const mat_name = if (name_parts.items.len > 1) name_parts.items[1] else "lambert";
+        const attrib_start_i = 2;
 
         var geo = try load_obj(device, dir, entry.name);
-        embree.rtcSetGeometryTessellationRate(geo, 10.0);
+        if (std.mem.eql(u8, name_parts.getLast(), "h")) { // hard geo
+            embree.rtcSetGeometryTessellationRate(geo, 0.0);
+        } else {
+            embree.rtcSetGeometryTessellationRate(geo, 10.0);
+        }
         embree.rtcCommitGeometry(geo);
 
         const geo_id: u32 = embree.rtcAttachGeometry(scene.embree_scene, geo);
-        try scene.assign_material(geo_id, if (std.mem.eql(u8, mat_name, "light"))
-            try scene.new_light(.{ .r = 10.0, .g = 1.0, .b = 1.0 })
-        else
-            try scene.new_lambert(.{ .r = 1.0, .g = 1.0, .b = 1.0 }));
-        log.debug("obj is .{s}.", .{mat_name});
+        try scene.assign_material(geo_id, if (std.mem.eql(u8, mat_name, "light")) blk: {
+            var r: f32 = 10.0; // default light color
+            var g: f32 = 9.0;
+            var b: f32 = 8.0;
+            if (name_parts.items.len >= attrib_start_i + 3) {
+                r = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 0]) catch r;
+                g = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 1]) catch g;
+                b = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 2]) catch b;
+            }
+            break :blk try scene.new_light(.{ .r = r, .g = g, .b = b });
+        } else if (std.mem.eql(u8, mat_name, "glass")) blk: {
+            var ior_base: f32 = 1.2;
+            var ior_shift: f32 = 0.4;
+            if (name_parts.items.len > attrib_start_i + 2) {
+                ior_base = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 0]) catch ior_base;
+                ior_shift = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 1]) catch ior_shift;
+            }
+            break :blk try scene.new_refract(ior_base, ior_shift);
+        } else blk: {
+            var r: f32 = 0.75; // default surface color
+            var g: f32 = 0.75;
+            var b: f32 = 0.75;
+            if (name_parts.items.len >= attrib_start_i + 3) {
+                r = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 0]) catch r;
+                g = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 1]) catch g;
+                b = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 2]) catch b;
+            }
+            break :blk try scene.new_lambert(.{ .r = r, .g = g, .b = b });
+        });
+        log.debug("obj is |{s}|", .{mat_name});
         embree.rtcReleaseGeometry(geo);
     }
 
