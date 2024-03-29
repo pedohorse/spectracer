@@ -9,7 +9,7 @@ pub const Pool = struct {
     user_data: ?*anyopaque = undefined,
     orig_slice_len: usize = 0,
     func: *const fn (*anyopaque, usize, usize, ?*anyopaque) void = undefined,
-    range_start: usize = 0,
+    next_avaiable_block: usize = 0,
     range_end: usize = 0,
     data_provided: []bool = undefined,
 
@@ -72,7 +72,7 @@ pub const Pool = struct {
             self.user_data = @ptrCast(user_data);
             self.orig_slice_len = data.len;
             self.func = &func_wrapper;
-            self.range_start = start;
+            self.next_avaiable_block = start;
             self.range_end = end;
             for (self.data_provided) |*dp| {
                 dp.* = true;
@@ -132,14 +132,27 @@ pub const Pool = struct {
                     //     i += tcount;
                     // }
 
-                    const block_size = 128;
-                    const stride = tcount * block_size;
-                    var i = self.range_start + tid * block_size;
-                    while (i < self.range_end) {
-                        for (0..@min(self.range_end - i, block_size)) |offset| {
-                            self.func(self.data, self.orig_slice_len, i + offset, self.user_data);
+                    // const block_size = 2;
+                    // const stride = tcount * block_size;
+                    // var i = self.range_start + tid * block_size;
+                    // while (i < self.range_end) {
+                    //     for (0..@min(self.range_end - i, block_size)) |offset| {
+                    //         self.func(self.data, self.orig_slice_len, i + offset, self.user_data);
+                    //     }
+                    //     i += stride;
+                    // }
+
+                    const block_size = 1;
+                    var cur_i: usize = 0;
+                    _ = tcount;
+                    while (true) {
+                        cur_i = @atomicRmw(usize, &self.next_avaiable_block, .Add, block_size, .Monotonic);
+                        if (cur_i >= self.range_end) {
+                            break;
                         }
-                        i += stride;
+                        for (0..@min(self.range_end - cur_i, block_size)) |offset| {
+                            self.func(self.data, self.orig_slice_len, cur_i + offset, self.user_data);
+                        }
                     }
                 }
                 self.data_provided[tid] = false;
