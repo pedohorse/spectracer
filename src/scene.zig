@@ -5,14 +5,17 @@ const embree = @cImport({
 const shaders = @import("shader.zig");
 const Color = @import("data_types.zig").Color;
 
-//pub const Material = enum { light, lambert }; // TODO: add a bunch of shit, obviously
+const Material = union(enum) {
+    lambert: *shaders.Lambert,
+    light: *shaders.Light,
+    refract: *shaders.Refract,
+    reflect: *shaders.Reflect,
+};
 
 pub const Scene = struct {
     embree_scene: embree.RTCScene,
     material_map: std.AutoHashMap(u32, shaders.Shader),
-    shaders_lambert: std.ArrayList(*shaders.Lambert),
-    shaders_lights: std.ArrayList(*shaders.Light),
-    shaders_refracts: std.ArrayList(*shaders.Refract), // TODO: this is so ugly, need a better way to keep track of allocs
+    materials: std.ArrayList(Material),
     alloc: std.mem.Allocator,
 
     pub fn init(
@@ -22,9 +25,7 @@ pub const Scene = struct {
         return Scene{
             .embree_scene = embree.rtcNewScene(device),
             .material_map = std.AutoHashMap(u32, shaders.Shader).init(allocator),
-            .shaders_lambert = std.ArrayList(*shaders.Lambert).init(allocator),
-            .shaders_lights = std.ArrayList(*shaders.Light).init(allocator),
-            .shaders_refracts = std.ArrayList(*shaders.Refract).init(allocator),
+            .materials = std.ArrayList(Material).init(allocator),
             .alloc = allocator,
         };
     }
@@ -39,35 +40,40 @@ pub const Scene = struct {
     }
 
     pub fn new_lambert(self: *Scene, color: Color) !shaders.Shader {
-        var shader = try self.alloc.create(shaders.Lambert);
-        shader.set_block_color(color);
-        try self.shaders_lambert.append(shader);
-        return shader.shader();
+        var material = try self.alloc.create(shaders.Lambert);
+        material.set_block_color(color);
+        try self.materials.append(Material{ .lambert = material });
+        return material.shader();
     }
 
     pub fn new_light(self: *Scene, color: Color) !shaders.Shader {
-        var shader = try self.alloc.create(shaders.Light);
-        shader.set_emit_color(color);
-        try self.shaders_lights.append(shader);
-        return shader.shader();
+        var material = try self.alloc.create(shaders.Light);
+        material.set_emit_color(color);
+        try self.materials.append(Material{ .light = material });
+        return material.shader();
     }
 
     pub fn new_refract(self: *Scene, ior_base: f32, ior_shift: f32) !shaders.Shader {
-        var shader = try self.alloc.create(shaders.Refract);
-        shader.set_ior(ior_base, ior_shift);
-        try self.shaders_refracts.append(shader);
-        return shader.shader();
+        var material = try self.alloc.create(shaders.Refract);
+        material.set_ior(ior_base, ior_shift);
+        try self.materials.append(Material{ .refract = material });
+        return material.shader();
+    }
+
+    pub fn new_reflect(self: *Scene) !shaders.Shader {
+        var material = try self.alloc.create(shaders.Reflect);
+        try self.materials.append(Material{ .reflect = material });
+        return material.shader();
     }
 
     pub fn deinit(self: *Scene) void {
-        for (self.shaders_lambert.items) |shader_ptr| {
-            self.alloc.destroy(shader_ptr);
-        }
-        for (self.shaders_lights.items) |shader_ptr| {
-            self.alloc.destroy(shader_ptr);
-        }
-        for (self.shaders_refracts.items) |shader_ptr| {
-            self.alloc.destroy(shader_ptr);
+        for (self.materials.items) |mat| {
+            switch (mat) {
+                .lambert => |material_ptr| self.alloc.destroy(material_ptr),
+                .light => |material_ptr| self.alloc.destroy(material_ptr),
+                .refract => |material_ptr| self.alloc.destroy(material_ptr),
+                .reflect => |material_ptr| self.alloc.destroy(material_ptr),
+            }
         }
 
         self.material_map.deinit();

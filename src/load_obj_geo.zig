@@ -61,7 +61,7 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
         if (std.mem.eql(u8, name_parts.getLast(), "h")) { // hard geo
             embree.rtcSetGeometryTessellationRate(geo, 0.0);
         } else {
-            embree.rtcSetGeometryTessellationRate(geo, 10.0);
+            embree.rtcSetGeometryTessellationRate(geo, 16.0);
         }
         embree.rtcCommitGeometry(geo);
 
@@ -84,6 +84,8 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
                 ior_shift = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 1]) catch ior_shift;
             }
             break :blk try scene.new_refract(ior_base, ior_shift);
+        } else if (std.mem.eql(u8, mat_name, "mirror")) blk: {
+            break :blk try scene.new_reflect();
         } else blk: {
             var r: f32 = 0.75; // default surface color
             var g: f32 = 0.75;

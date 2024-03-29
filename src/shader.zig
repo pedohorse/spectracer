@@ -141,7 +141,6 @@ pub const Light = struct {
 };
 
 pub const Refract = struct {
-    const spec_zero = spect.Spectrum.new_black();
     ior_base: f32 = 1.2,
     ior_shift: f32 = 0.4,
 
@@ -196,7 +195,49 @@ pub const Refract = struct {
             .is_light = false,
             .is_frequency_dependent = true,
             .is_non_random_dir = true,
-            .emit_spectrum = &spec_zero,
+            .emit_spectrum = &spect.Spectrum.zero,
+            ._dir_sampler = &@This().inner_dir_sample,
+            ._brdf_sampler_spec = &@This().inner_brdf_spec,
+            ._brdf_sampler_freq = &@This().inner_brdf_freq,
+            ._sampler_data = self,
+        };
+    }
+};
+
+pub const Reflect = struct {
+    fn inner_dir_sample(data: ?*anyopaque, u: f32, v: f32, in: @Vector(3, f32), normal: @Vector(3, f32), freq: f32) @Vector(3, f32) {
+        // just perfect reflection
+        _ = u;
+        _ = v;
+        _ = data;
+        _ = freq;
+        const dotn = @reduce(.Add, normal * in);
+        return -in + @as(@Vector(3, f32), @splat(2.0 * dotn)) * normal;
+    }
+
+    fn inner_brdf_spec(data: ?*anyopaque, in: @Vector(3, f32), out: @Vector(3, f32), normal: @Vector(3, f32)) spect.Spectrum {
+        _ = in;
+        _ = data;
+
+        var spec = spect.Spectrum.new_white();
+        spec.scale(1.0 / @reduce(.Add, out * normal) / (2 * std.math.pi));
+        return spec; // for now just pure reflect
+    }
+
+    fn inner_brdf_freq(data: ?*anyopaque, in: @Vector(3, f32), out: @Vector(3, f32), normal: @Vector(3, f32), freq: f32) f32 {
+        _ = in;
+        _ = data;
+        _ = freq;
+
+        return 1.0 / @reduce(.Add, out * normal) / (2 * std.math.pi); // for now just pure reflect
+    }
+
+    pub fn shader(self: *@This()) Shader {
+        return Shader{
+            .is_light = false,
+            .is_frequency_dependent = false,
+            .is_non_random_dir = true,
+            .emit_spectrum = &spect.Spectrum.zero,
             ._dir_sampler = &@This().inner_dir_sample,
             ._brdf_sampler_spec = &@This().inner_brdf_spec,
             ._brdf_sampler_freq = &@This().inner_brdf_freq,

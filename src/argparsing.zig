@@ -16,6 +16,7 @@ const ArgsParsingState = enum {
     readPrimarySamples,
     readSecondartSamples,
     ReadMaxBounce,
+    ReadMaxRefRef,
 };
 
 fn print_usage() void {
@@ -28,6 +29,7 @@ fn print_usage() void {
         \\      -1 count       : set primary sample count
         \\      -2 count       : set secondary ray count
         \\      -d depth       : set maximum ray depth
+        \\      -b depth       : set maximum reflections/refractions
         \\      -c count       : set render chunk size
         \\      -h             : pring help message
         \\
@@ -95,6 +97,10 @@ pub fn parse_args(alloc: std.mem.Allocator) !RenderOptions {
                             // max depth
                             state = .ReadMaxBounce;
                         },
+                        'b' => {
+                            // max reflect/refract depth
+                            state = .ReadMaxRefRef;
+                        },
                         'h' => {
                             print_usage();
                             return ArgsParsingError.printUsage;
@@ -156,8 +162,15 @@ pub fn parse_args(alloc: std.mem.Allocator) !RenderOptions {
             },
             .ReadMaxBounce => {
                 state = main_state;
-                options.ray_max_depth = std.fmt.parseInt(usize, arg, 10) catch {
+                options.ray_max_depth = std.fmt.parseInt(u16, arg, 10) catch {
                     std.log.err("'{s}' does not look like a positive integer max depth value", .{arg});
+                    return ArgsParsingError.ohNooo;
+                };
+            },
+            .ReadMaxRefRef => {
+                state = main_state;
+                options.ray_bent_max_depth = std.fmt.parseInt(u16, arg, 10) catch {
+                    std.log.err("'{s}' does not look like a positive integer max reflect/refract depth value", .{arg});
                     return ArgsParsingError.ohNooo;
                 };
             },

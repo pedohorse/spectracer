@@ -5,6 +5,9 @@ const freq_to_color = @import("spec.zig").spec; // this is CIE XYZ curves
 const spec_size = 42;
 const freq_strip_width: f32 = 10; // 10 Thz
 pub const Spectrum = struct {
+    pub const zero: Spectrum = new_black();
+    pub const one: Spectrum = new_uniform(1.0);
+
     const color_scale: f32 = freq_strip_width / 100.0; // 100 is some arbitrary scale factor
     pub const start_freq = 380;
     pub const end_freq = 800; // one after last, as usual

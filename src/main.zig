@@ -163,7 +163,7 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]const Chunk
             rayhit.ray.tfar = std.math.inf(f32);
             rayhit.hit.geomID = embree.RTC_INVALID_GEOMETRY_ID;
 
-            const val = trace_ray(Spectrum, &rayhit, 0.0, &chunk_data, randomizer.random(), 0);
+            const val = trace_ray(Spectrum, &rayhit, 0.0, &chunk_data, randomizer.random(), .{ 0, 0 });
             avg_val.add(&val);
         }
         avg_val.scale(1.0 / @as(f32, @floatFromInt(primary_samples * primary_samples)));
@@ -185,8 +185,8 @@ fn trace_chunk2(chunks: [][]Color, chunk_id: usize, chunk_datas: ?*[]const Chunk
     }
 }
 
-fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_data: *const ChunkData, rng: std.rand.Random, depth: u32) T {
-    if (depth > chunk_data.scene_data.options.ray_max_depth) {
+fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_data: *const ChunkData, rng: std.rand.Random, depth: [2]u16) T {
+    if (depth[0] > chunk_data.scene_data.options.ray_max_depth or depth[1] > chunk_data.scene_data.options.ray_bent_max_depth) {
         if (T == Spectrum) {
             return Spectrum.new_black();
         } else if (T == f32) {
@@ -236,6 +236,7 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
     };
 
     const sample_count: usize = if (shader.is_non_random_dir) 1 else chunk_data.scene_data.options.ray_secondary_samples;
+    const new_depth: [2]u16 = if (shader.is_non_random_dir) .{ depth[0], depth[1] + 1 } else .{ depth[0] + 1, depth[1] };
 
     for (0..sample_count) |_| {
         if (T == Spectrum) {
@@ -254,7 +255,7 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
                         .{ 0, 0, 0 };
                     init_secondary_rayhit(&secondary_rayhit, ray_hit_point + hitoffset, new_dir);
 
-                    const sample = trace_ray(f32, &secondary_rayhit, freq, chunk_data, rng, depth + 1);
+                    const sample = trace_ray(f32, &secondary_rayhit, freq, chunk_data, rng, new_depth);
                     const brdf = shader.brdf_freq(ray_in, new_dir, normal, freq);
                     x.* += sample * brdf * dotn;
                 }
@@ -268,7 +269,7 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
                     .{ 0, 0, 0 };
                 init_secondary_rayhit(&secondary_rayhit, ray_hit_point + hitoffset, new_dir);
 
-                const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
+                const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, new_depth);
                 const brdf_spec = shader.brdf_spec(ray_in, new_dir, normal);
                 for (&val.values, new_sample.values, brdf_spec.values) |*x, y, b| {
                     x.* += y * b * dotn;
@@ -284,7 +285,7 @@ fn trace_ray(comptime T: type, rayhit: *embree.RTCRayHit, frequency: f32, chunk_
                 .{ 0, 0, 0 };
             init_secondary_rayhit(&secondary_rayhit, ray_hit_point + hitoffset, new_dir);
 
-            const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, depth + 1);
+            const new_sample: T = trace_ray(T, &secondary_rayhit, frequency, chunk_data, rng, new_depth);
             const brdf = shader.brdf_freq(ray_in, new_dir, normal, frequency);
             val += new_sample * brdf * dotn;
         } else unreachable;

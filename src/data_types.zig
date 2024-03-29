@@ -21,8 +21,9 @@ pub const Color = struct {
 
 pub const RenderOptions = struct {
     resolution: [2]usize = .{ 1024, 1024 },
-    chunk: usize = 100,
-    ray_max_depth: usize = 2,
+    chunk: usize = 256,
+    ray_max_depth: u16 = 2,
+    ray_bent_max_depth: u16 = 32, //
     ray_secondary_samples: usize = 9,
     ray_primary_samples: usize = 3,
     output_path: std.ArrayList(u8),
