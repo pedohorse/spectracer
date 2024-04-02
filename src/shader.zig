@@ -53,6 +53,11 @@ pub const Lambert = struct {
 
     pub fn set_block_color(self: *Lambert, color: Color) void {
         self.block_spectrum = spect.Spectrum.from_color(color);
+        // normalize spectrum's block amount to "white"
+        // cuz white is NOT the same as spectrum 1
+        for (&self.block_spectrum.values, spect.Spectrum.white.values) |*f, w| {
+            f.* = @max(0.0, @min(1.0, f.* / w));
+        }
         self.block_spectrum.scale(1.0 / std.math.pi); // energy conservation factor baked in, not to multiply every time
     }
 
@@ -219,7 +224,7 @@ pub const Reflect = struct {
         _ = in;
         _ = data;
 
-        var spec = spect.Spectrum.new_white();
+        var spec = spect.Spectrum.new_one();
         spec.scale(1.0 / @reduce(.Add, out * normal) / (2 * std.math.pi));
         return spec; // for now just pure reflect
     }
