@@ -16,6 +16,5 @@ stdenv.mkDerivation {
   ];
 
   zigBuildFlags = [
-    "-Doptimize=ReleaseFast"
   ];
 }
