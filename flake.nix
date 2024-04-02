@@ -1,5 +1,5 @@
 {
-  description = "spectracer";
+  description = "simple embree-based backwards path-tracer that traces different frequencies separately";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
