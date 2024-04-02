@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log;
 const scene_stuff = @import("scene.zig");
 const shaders = @import("shader.zig");
+const SceneDescription = @import("scene_data.zig").SceneDescription;
 const alloc = std.heap.page_allocator;
 const embree = @cImport({
     @cInclude("embree3/rtcore.h");
@@ -16,14 +17,63 @@ const LoadingError = error{
 };
 
 pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !scene_stuff.Scene {
-    var idir = std.fs.cwd().openIterableDir(scene_dir_path, .{}) catch {
-        return LoadingError.FileNotFound;
-    };
-    defer idir.close();
+    // check if json file is present
     var dir = std.fs.cwd().openDir(scene_dir_path, .{}) catch {
         return LoadingError.FileNotFound;
     };
     defer dir.close();
+
+    _ = dir.statFile("scene.json") catch {
+        return load_obj_scene_no_json(device, dir);
+    };
+    // otherwise scene.json file exists
+    return load_obj_scene_json(device, dir);
+}
+
+pub fn load_obj_scene_json(device: embree.RTCDevice, scene_dir: std.fs.Dir) !scene_stuff.Scene {
+    var file = try scene_dir.openFile("scene.json", .{});
+    defer file.close();
+
+    const contents = try file.readToEndAlloc(alloc, 1_000_000_000);
+
+    var scene_desc = std.json.parseFromSlice(SceneDescription, alloc, contents, .{ .ignore_unknown_fields = true }) catch |err| {
+        switch (err) {
+            error.SyntaxError, error.UnexpectedEndOfInput => {
+                std.log.err("bad scene file", .{});
+            },
+            else => {
+                std.log.err("error parsing scene", .{});
+            },
+        }
+        return err;
+    };
+    defer scene_desc.deinit();
+
+    // ok, scene parsed
+    var scene = scene_stuff.Scene.init(alloc, device);
+
+    for (scene_desc.value.objects) |object| {
+        var geo = try load_obj(device, scene_dir, object.file);
+        embree.rtcSetGeometryTessellationRate(geo, object.tesselation);
+        embree.rtcCommitGeometry(geo);
+
+        const geo_id: u32 = embree.rtcAttachGeometry(scene.embree_scene, geo);
+        try scene.assign_material(geo_id, switch (object.mat) {
+            .lambert => |mat| try scene.new_lambert(.{ .r = mat.cr, .g = mat.cg, .b = mat.cb }),
+            .light => |mat| try scene.new_light(.{ .r = mat.er, .g = mat.eg, .b = mat.eb }),
+            .glass => |mat| try scene.new_refract(mat.ior_base, mat.ior_shift),
+            .mirror => try scene.new_reflect(),
+        });
+    }
+    scene.commit();
+    return scene;
+}
+
+pub fn load_obj_scene_no_json(device: embree.RTCDevice, scene_dir: std.fs.Dir) !scene_stuff.Scene {
+    var idir = scene_dir.openIterableDir(".", .{}) catch {
+        return LoadingError.FileNotFound;
+    };
+    defer idir.close();
 
     //var rtc_scene = embree.rtcNewScene(device);
     //var matmap = std.AutoHashMap(u32, shaders.Shader).init(alloc);
@@ -33,7 +83,17 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
     var name_parts = try std.ArrayList([]const u8).initCapacity(alloc, 16);
     defer name_parts.deinit();
     while (try dir_iter.next()) |entry| {
-        if (entry.kind != .file) continue;
+        // we cannot rely on entry.kind on some fs, some systems, where stat call is expensive,
+        // according to some implementation detail man pags (getdents64)
+        const kind =
+            if (entry.kind != .unknown)
+            entry.kind
+        else blk: {
+            const fstat = scene_dir.statFile(entry.name) catch continue;
+            break :blk fstat.kind;
+        };
+
+        if (kind != .file) continue;
 
         // figure out material from name
         const name_no_ext = entry.name[0 .. std.mem.lastIndexOf(u8, entry.name, ".") orelse entry.name.len];
@@ -57,7 +117,7 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
         const mat_name = if (name_parts.items.len > 1) name_parts.items[1] else "lambert";
         const attrib_start_i = 2;
 
-        var geo = try load_obj(device, dir, entry.name);
+        var geo = try load_obj(device, scene_dir, entry.name);
         if (std.mem.eql(u8, name_parts.getLast(), "h")) { // hard geo
             embree.rtcSetGeometryTessellationRate(geo, 0.0);
         } else {
@@ -79,7 +139,7 @@ pub fn load_obj_scene(device: embree.RTCDevice, scene_dir_path: []const u8) !sce
         } else if (std.mem.eql(u8, mat_name, "glass")) blk: {
             var ior_base: f32 = 1.2;
             var ior_shift: f32 = 0.4;
-            if (name_parts.items.len > attrib_start_i + 2) {
+            if (name_parts.items.len >= attrib_start_i + 2) {
                 ior_base = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 0]) catch ior_base;
                 ior_shift = std.fmt.parseFloat(f32, name_parts.items[attrib_start_i + 1]) catch ior_shift;
             }
