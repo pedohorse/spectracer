@@ -7,6 +7,10 @@ const freq_strip_width: f32 = 10; // 10 Thz
 pub const Spectrum = struct {
     pub const zero: Spectrum = new_black();
     pub const one: Spectrum = new_uniform(1.0);
+    pub const white: Spectrum = blk: {
+        @setEvalBranchQuota(125 * 42 * 3 * 2);
+        break :blk Spectrum.from_color(.{ .r = 1.0, .g = 1.0, .b = 1.0 });
+    };
 
     const color_scale: f32 = freq_strip_width / 100.0; // 100 is some arbitrary scale factor
     pub const start_freq = 380;
@@ -18,7 +22,7 @@ pub const Spectrum = struct {
         return new_uniform(0.0);
     }
 
-    pub fn new_white() Spectrum {
+    pub fn new_one() Spectrum {
         return new_uniform(1.0);
     }
 
