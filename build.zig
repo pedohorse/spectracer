@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "zigembree",
+        .name = "spectracer",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
@@ -28,6 +28,9 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("embree3");
     exe.linkSystemLibrary("spng");
     exe.addLibraryPath(.{ .path = "/usr/lib" });
+    if (exe.target.os_tag == .windows) {
+        exe.addLibraryPath(std.Build.LazyPath.relative("x86_64-windows"));
+    }
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
