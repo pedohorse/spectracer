@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("spng");
     exe.addLibraryPath(.{ .path = "/usr/lib" });
     if (exe.target.os_tag == .windows) {
+        exe.addSystemIncludePath(std.Build.LazyPath.relative("include"));
         exe.addLibraryPath(std.Build.LazyPath.relative("x86_64-windows"));
     }
 
