@@ -1,6 +1,8 @@
 name: build stuff
 on:
-  - workflow_dispatch
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 jobs:
   build_spng:
@@ -37,23 +39,26 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
+      - name: create dirs
+        run: |
           mkdir built-embree
           mkdir x86_64-windows
           mkdir include
-        shell: bash
-      - run: |
+        shell: bash        
+      - name: download embree3
+        run: |
           Invoke-WebRequest -Uri https://github.com/embree/embree/releases/download/v3.13.5/embree-3.13.5.x64.vc14.windows.zip -OutFile embree.zip
         working-directory: built-embree
-      - run: |
+      - name: unzip embree
+        run: |
           7z x embree.zip
         working-directory: built-embree
-      - run: |
+      - name: get some libs and includes
+        run: |
           rm built-embree/*.zip
           cp built-embree/embree*/lib/embree3.lib x86_64-windows/.
           cp built-embree/embree*/bin/{embree3.dll,msvcp140.dll,tbb12.dll,vcruntime140.dll} x86_64-windows/.
           cp -r built-embree/embree*/include/embree3 include/.
-
         shell: bash
 
       - uses: actions/download-artifact@v4
@@ -61,7 +66,8 @@ jobs:
           name: spng-win
           path:
             spng-win
-      - run: |
+      - name: get some more libs and includes
+        run: |
           cp spng-win/build/spng*.{dll,lib} x86_64-windows/.
           cp spng-win/build/subprojects/zlib*/z.dll x86_64-windows/.
           cp spng-win/spng/spng.h include/.
@@ -70,14 +76,17 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: "0.11.0"
-      - name: do the stuff
+      - name: do the build stuff
         run: zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu
-      - run: |
+      - name: gather release files
+        run: |
           mkdir -p out-dist/spectracer
           cp zig-out/bin/spectracer.exe out-dist/spectracer/.
           cp x86_64-windows/*.dll out-dist/spectracer/.
+          cp LICENSE README.md out-dist/spectracer/.
         shell: bash
-      - run: |
+      - name: compresssssss
+        run: |
           Compress-Archive -Path out-dist/spectracer -DestinationPath out-dist/spectracer.zip
       - uses: actions/upload-artifact@v4
         with:
