@@ -10,10 +10,11 @@ pub const Color = struct {
         inline for (.{ "r", "g", "b" }) |comp| {
             var c = @field(self, comp);
             c = @max(0, c);
-            if (c < 0.0031308) {
+            if (c <= 0.0031308) {
                 c = 12.92 * c;
+            } else {
+                c = 1.055 * std.math.pow(f32, c, 1.0 / 2.4) - 0.055;
             }
-            c = 1.055 * std.math.pow(f32, c, 0.41666) - 0.055;
             @field(self, comp) = c;
         }
     }
