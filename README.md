@@ -24,7 +24,15 @@ the path to a directory.
 
 In that directory there may or may not be `scene.json` file
 
-#### Variant1: no scene,json
+in both case you provide path the scene directory (not to any specific file in it),
+so you just run smth like:
+
+`spectracer path/to/scene output.png`
+
+or with some flags (flags must be before the last argument):  
+`spectracer path/to/scene -1 10 -2 6 -d 3 output.png`
+
+#### Variant1: no scene.json
 
 All files in the scene directory will be treated as `obj` files.
 
@@ -58,7 +66,7 @@ For example:
 - `bibabuba_mirror`  
   means this object is a perfect mirror.
 
-#### Variant2, with scene.json
+#### Variant2: with scene.json
 
 In this case, name of obj files do not matter, only `scene.json` file
 is read.
@@ -103,7 +111,10 @@ and materials. Example would be:
 
 All file paths are relative to `scene.json` directory
 
+check `examples` dir for example scenes
+
 ## Example images
+These images/animations were rendered in the process of making the renderer, so some have bugs, some don't have correct color transformation...
 
 A prism  
 ![](showoff/prism.png) ![](showoff/prism1a.png)

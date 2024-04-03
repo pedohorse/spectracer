@@ -1,0 +1,32 @@
+{
+  "objects": [
+    {
+      "file": "bg.obj",
+      "mat": {
+        "lambert": {
+          "cr": 0.9,
+          "cb": 0.9,
+          "cg": 0.9
+        }
+      }
+    },
+    {
+      "file": "tube1.obj",
+      "mat": {
+        "light": {
+          "er": 12,
+          "eb": 12,
+          "eg": 12
+        }
+      }
+    },
+    {
+      "file": "tube2.obj",
+      "mat": {
+        "glass": {
+        }
+      },
+      "tesselation": 64
+    }
+  ]
+}
