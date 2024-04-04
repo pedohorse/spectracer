@@ -8,6 +8,17 @@ except it traces different light frequencies separately.
 This is a test to get some "physically-correct" light decomposition
 and rainbow effects
 
+## Build
+
+- windows users may just use [pre-built binaries](https://github.com/pedohorse/spectracer/releases)
+- nix users may just do `nix run github:pedohorse/spectracer`, or build, then run, well, you know  
+  (note, nixpkgs's zig hook builds with `ReleaseSafe`, not `ReleaseFast`)
+- to build it the most boring way:
+  - you need to install dependencies: `embree3`, `libspng` (maybe dev versions, depending on your package repo)
+  - build script expects those libs to be installed to default system location (`/usr/include` and `/usr/lib`),
+    you may change that in `build.zig` if you have something special going on.
+  - `zig build -Doptimize=ReleaseFast`
+  - use `zig-out/bin/spectracer`
 
 ## Usage
 
