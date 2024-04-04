@@ -128,7 +128,7 @@ check `examples` dir for example scenes
 These images/animations were rendered in the process of making the renderer, so some have bugs, some don't have correct color transformation...
 
 A prism  
-![](showoff/prism.png) ![](showoff/prism1a.png)
+![](showoff/prism.png) ![](showoff/prism1a.png) ![](showoff/prism_dark.png)
 
 Just one of first renders  
 ![](showoff/pig1.jpg)
